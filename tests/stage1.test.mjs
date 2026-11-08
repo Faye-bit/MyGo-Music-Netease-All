@@ -259,7 +259,7 @@ test('stream deduplicates same-account requests and stores only safe metadata',a
   const first=s.plugin.stream({id:'1',quality:'high'}),second=s.plugin.stream({id:'1',quality:'high'});
   result.resolve(response({code:200,data:[{id:1,code:200,url:'https://m1.music.126.net/mock.mp3?token=secret',type:'mp3',level:'exhigh',br:320000}]}));
   await Promise.all([first,second]);assert.equal(s.calls.length,1);
-  const summary=s.storage.get('streamSummary');assert.deepEqual(Object.keys(summary).sort(),['requested','actual','type','bitRate','time'].sort());
+  const summary=s.storage.get('streamSummary');assert.deepEqual(Object.keys(summary).sort(),['requested','requestedLevel','actualLevel','reportedLevel','actual','type','bitRate','size','time'].sort());
   assert.doesNotMatch(JSON.stringify(summary),/secret|cookie|126.net/);
 });
 
@@ -333,10 +333,10 @@ test('cancellation setting stops a late result even when browse pages are cached
   await assert.rejects(pending,rejectCode('cancelled'));assert.equal(s.storage.has('session'),false);
 });
 
-test('stream refusal retries once, but never retries a content or rate error',async()=>{
+test('stream refusal does not retry or step down',async()=>{
   const s=await setup(()=>response({code:460}));
-  await assert.rejects(s.plugin.stream({id:'1'}),/仍拒绝/);
-  assert.equal(s.calls.length,2);
+  await assert.rejects(s.plugin.stream({id:'1'}),/拒绝/);
+  assert.equal(s.calls.length,1);
 });
 
 test('late likes from an old account do not populate a new account cache',async()=>{

@@ -24,6 +24,9 @@ let epoch = 0;
 let profileCheckedAt = 0;
 let likedCache = null;
 const pendingStreams = new Map();
+// high is the existing host's name for exhigh. The other names are protocol
+// candidates for a future host, not extra settings on the three-level host.
+const STREAM_LEVELS = { standard: "standard", high: "exhigh", higher: "higher", exhigh: "exhigh", lossless: "lossless", hires: "hires" };
 // Memory-only recommendation state. Replaced on every account/refresh boundary.
 let homeCache = new Map();
 let homeRevision = 0;
@@ -946,7 +949,8 @@ async function originalStream({ id, quality = "high" }) {
   id = trackIdentity(id).audio;
   if (!id) throw fail("unavailable", "该播客节目没有可播放的音频");
   const generation = epoch;
-  const key = `${generation}:${id}:${quality}`;
+  if (!Object.prototype.hasOwnProperty.call(STREAM_LEVELS, quality)) throw fail("unavailable", "不支持的音质偏好，请更新播放器或重新选择音质");
+  const key = `${generation}:${id}:${STREAM_LEVELS[quality]}`;
   if (pendingStreams.has(key)) return pendingStreams.get(key);
   const pending = loadStream(id, quality, generation);
   pendingStreams.set(key, pending);
@@ -955,40 +959,51 @@ async function originalStream({ id, quality = "high" }) {
 }
 
 async function loadStream(id, quality, generation) {
-  const level = { standard: "standard", high: "exhigh", lossless: "lossless" }[quality] || "exhigh";
-  let data;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (generation !== epoch) throw new Error("账号状态已改变，请重试");
-    try {
-      data = await eapi("/api/song/enhance/player/url/v1", {
-        ids: JSON.stringify([Number(id)]), level, encodeType: level === "lossless" ? "flac" : "mp3",
-      });
-      break;
-    } catch (error) {
-      if (![460, -460].includes(error.neteaseCode)) throw error;
-      if (attempt === 1) throw new Error(`网易云仍拒绝播放请求（${error.neteaseCode}），请稍后再试，并在官方客户端确认该歌曲可正常播放`);
-      // One delayed retry of this read only, with the same device/account and
-      // quality. Never retry account mutations or turn permission failures
-      // into a different source, a preview, or a lower-quality success.
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
+  const level = STREAM_LEVELS[quality];
+  const context = scope();
+  if (generation !== epoch) throw fail("cancelled", "账号状态已改变，请重试");
+  // Let the server return an entitled complete lower level. Do not interpret
+  // empty URLs, risk controls or transport errors as permission to step down.
+  const data = await eapi("/api/song/enhance/player/url/v1", {
+    ids: JSON.stringify([Number(id)]), level,
+    encodeType: ["lossless", "hires"].includes(level) ? "flac" : "mp3",
+  }, context.options);
+  context.check();
   const audio = (data.data || []).find((item) => String(item.id) === id);
   if (!audio || !audio.url || (audio.code !== undefined && audio.code !== 200) || audio.freeTrialInfo != null) {
     throw fail("unavailable", "当前账号无完整播放权限，或歌曲在当前地区不可用");
   }
-  const url = new URL(secureURL(audio.url));
-  if (url.protocol !== "https:" || !/^(?:[a-z0-9-]+\.)*music\.126\.net$/i.test(url.hostname)) {
+  let url;
+  try { url = new URL(secureURL(audio.url)); }
+  catch { throw fail("unavailable", "网易云返回了无效的音频地址"); }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || !/^(?:[a-z0-9-]+\.)*music\.126\.net$/i.test(url.hostname)) {
     throw fail("unavailable", "网易云返回了不支持的音频地址");
   }
-  const type = String(audio.type || "mp3").toLowerCase();
+  const type = String(audio.type || "").toLowerCase();
   if (!["mp3", "flac", "ogg"].includes(type)) throw fail("unavailable", "该歌曲的音频格式暂不支持");
-  return {
-    url: url.toString(), type, size: audio.size || 0, bitRate: audio.br || 0,
-    quality: ["lossless", "hires"].includes(audio.level) ? "lossless" : audio.level === "standard" ? "standard" : "high",
-    gain: audio.gain || 0, peak: audio.peak || 0,
-    headers: { "User-Agent": UA, Referer: `${SITE}/` },
+  const positive = value => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+  if (audio.expi !== undefined && !positive(audio.expi)) throw fail("unavailable", "音频地址已失效，请重新播放以获取新地址");
+  const bitRate = positive(audio.br), size = positive(audio.size);
+  const lossless = type === "flac";
+  const reported = Object.values(STREAM_LEVELS).includes(audio.level) ? audio.level : "unknown";
+  const consistent = lossless ? ["lossless", "hires"].includes(reported) : ["standard", "higher", "exhigh"].includes(reported);
+  const actualLevel = consistent ? reported : "unknown";
+  // Missing/contradictory level must never fall back to the requested level.
+  // A FLAC container establishes lossless, but alone cannot establish Hi-Res.
+  const actual = lossless ? "lossless" : actualLevel === "standard" ? "standard" :
+    ["higher", "exhigh"].includes(actualLevel) || bitRate > 128000 ? "high" : "standard";
+  const metadata = {
+    requestedLevel: level, actualLevel, reportedLevel: reported,
+    actual, type, bitRate, size,
   };
+  for (const field of ["sampleRate", "bitDepth", "expi"]) {
+    if (positive(audio[field])) metadata[field] = audio[field];
+  }
+  return { metadata, audio: {
+    url: url.toString(), type, size, bitRate, quality: actual,
+    gain: Number.isFinite(audio.gain) ? audio.gain : 0, peak: positive(audio.peak),
+    headers: { "User-Agent": UA, Referer: `${SITE}/` },
+  } };
 }
 
 // The host asks stationNext again as the queue runs out. These modes are
@@ -1099,7 +1114,7 @@ async function browse({ page }) {
     const audio = host.storage.get("streamSummary");
     return {
       title: "播放诊断",
-      description: audio ? `最近取流：${audio.time}\n请求偏好 ${audio.requested}；返回宿主档位 ${audio.actual}；格式 ${audio.type}；码率 ${audio.bitRate} bps。\n此记录仅代表获取完整音源地址成功，不代表实际解码播放或 Hi-Res 验收通过。` : "暂无取流记录。播放歌曲后重新进入此页查看。",
+      description: audio ? `最近成功取流：${audio.time}\n请求偏好 ${audio.requested}；请求档位 ${audio.requestedLevel || "未记录"}；实际档位 ${audio.actualLevel || "unknown"}；服务端档位 ${audio.reportedLevel || "未记录"}；宿主档位 ${audio.actual}。\n格式 ${audio.type}；码率 ${audio.bitRate} bps；大小 ${audio.size || 0} 字节；采样率 ${audio.sampleRate || "未提供"}；位深 ${audio.bitDepth || "未提供"}。\n此记录仅代表获取完整音源地址成功，不代表实际解码播放或 Hi-Res 验收通过。缓存播放可能不会调用插件，摘要不代表当前缓存音质。` : "暂无取流记录。播放歌曲后重新进入此页查看。",
       sections: [],
     };
   }
@@ -1108,11 +1123,10 @@ async function browse({ page }) {
 
 async function stream(args) {
   const context = scope();
-  const audio = await originalStream(args);
+  const { audio, metadata } = await originalStream(args);
   context.check();
   host.storage.set("streamSummary", {
-    requested: args.quality || "high", actual: audio.quality,
-    type: audio.type, bitRate: audio.bitRate, time: new Date().toISOString(),
+    ...metadata, requested: args.quality || "high", time: new Date().toISOString(),
   });
   return audio;
 }
