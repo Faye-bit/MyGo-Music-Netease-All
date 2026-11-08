@@ -14,6 +14,7 @@ export async function setup(handler, {initial=signed, timeout=false}={}) {
   let now=1800000000000, initialized=false;
   const FakeDate=class extends Date {constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
   const host={
+    dir:"/mock/MyGo Music/网易云 All",
     storage:{get:k=>{if(!initialized) throw Error('host called during module initialization'); return structuredClone(storage.get(k));},set:(k,v)=>storage.set(k,structuredClone(v)),remove:k=>storage.delete(k)},
     signInPrompt:p=>prompts.push(structuredClone(p)),
     crypto:{md5:s=>createHash('md5').update(s).digest('hex'),aesEcbEncrypt:(key,s)=>{const c=createCipheriv('aes-128-ecb',key,null);return Buffer.concat([c.update(s),c.final()]).toString('hex');}},

@@ -80,6 +80,14 @@ function pageOffset(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+// host.dir points at the install root for both repository and Zip installs.
+// Encode path segments so spaces/non-ASCII names remain valid file URLs.
+function coverAsset(name) {
+  const directory = String(host.dir).replace(/\\/g, "/").replace(/\/+$/, "");
+  return "file://" + (directory.startsWith("/") ? "" : "/") +
+    directory.split("/").map(encodeURIComponent).join("/") + `/assets/${name}.png`;
+}
+
 function secureURL(value) {
   return typeof value === "string" ? value.replace(/^http:\/\//, "https://") : "";
 }
@@ -615,8 +623,7 @@ async function personalizedHome() {
       { title: "探索音乐", links: [
         { title: "私人雷达", subtitle: "网易云音乐 · 私人雷达", page: "radar", imageUrl: cover },
         { title: "个性化歌单", subtitle: "登录后获取网易云推荐", page: "recommendations", imageUrl: recommendations?.[0]?.imageUrl || "" },
-        { title: "排行榜", page: "charts", imageUrl: "" },
-        { title: "刷新首页推荐", subtitle: "重新读取日推、推荐歌单及雷达封面", page: `home-refresh:${epoch}:${homeRevision}:${Date.now()}` },
+        { title: "排行榜", page: "charts", imageUrl: coverAsset("charts") },
       ] },
       { title: "私人漫游", stations: stationList() },
       { title: profile ? "为你推荐的歌单" : "普通推荐（未登录）", playlists: recommendations || [],
@@ -984,7 +991,7 @@ function stationList() {
     { id: "DEFAULT", name: "私人漫游", description: "随心听，持续推荐你可能喜欢的歌曲" },
     { id: "FAMILIAR", name: "熟悉的歌", description: "回到熟悉的旋律" },
     { id: "EXPLORE", name: "新发现", description: "探索还没听过的音乐" },
-  ].map(station => ({ ...station, imageUrl: "" }));
+  ].map((station, index) => ({ ...station, imageUrl: coverAsset(["roam", "familiar", "explore"][index]) }));
 }
 
 async function stations() {

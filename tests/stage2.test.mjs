@@ -27,7 +27,11 @@ test('home leads with real ordered daily tracks, reuses data, and never consumes
   assert.equal(count(s,'/api/v1/discovery/recommend/resource'),1);
   assert.equal(count(s,'/api/v3/song/detail'),0);
   assert.equal(count(s,'/api/v1/radio/get'),0);
-  assert(home.sections[2].stations.every(st=>st.imageUrl===''));
+  assert.equal(home.sections[1].links.some(link=>link.title==='刷新首页推荐'),false);
+  const coverNames=['roam','familiar','explore'];
+  assert.deepEqual(Array.from(home.sections[2].stations,st=>new URL(st.imageUrl).pathname.split('/').pop()),coverNames.map(n=>n+'.png'));
+  assert(home.sections[2].stations.every(st=>st.imageUrl.startsWith('file:///mock/MyGo%20Music/')));
+  assert(home.sections[1].links.find(link=>link.page==='charts').imageUrl.endsWith('/assets/charts.png'));
 });
 
 test('anonymous home labels ordinary content and makes no private requests',async()=>{
