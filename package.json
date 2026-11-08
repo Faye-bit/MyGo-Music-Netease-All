@@ -1,0 +1,11 @@
+{
+  "name": "mygo-music-netease-all",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check plugin/index.js",
+    "test": "node --experimental-vm-modules --test tests/*.test.mjs",
+    "package": "python3 scripts/package.py"
+  }
+}
