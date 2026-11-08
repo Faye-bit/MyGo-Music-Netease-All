@@ -611,7 +611,7 @@ async function personalizedHome() {
   context.check();
   if (revision !== homeRevision) throw fail("cancelled", "推荐已刷新，请重试");
   const dailySection = {
-    title: "每日推荐", pageTitle: "每日推荐", subtitle: "为你精选的音乐", tracks: daily || [],
+    title: "每日推荐", pageTitle: "每日歌曲推荐", subtitle: "根据你的音乐口味生成", tracks: daily || [],
     empty: !profile ? "登录后查看每日推荐，请从账号入口扫码登录。" :
       daily === null ? "每日推荐暂时无法加载，可手动刷新重试；其他入口仍可使用。" : "网易云本次没有返回每日推荐歌曲。",
   };
@@ -651,7 +651,14 @@ async function originalBrowse({ page }) {
   if (page === "daily") {
     await requireAccount();
     context.check();
-    return { title: "每日推荐", sections: [{ tracks: await dailyTracks(context), empty: "网易云本次没有返回每日推荐歌曲" }] };
+    const tracks = await dailyTracks(context);
+    const date = new Date(Date.now() + 8 * 3600000);
+    const weekday = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"][date.getUTCDay()];
+    return {
+      title: "每日歌曲推荐", subtitle: `每日推荐 · ${date.getUTCMonth() + 1}月${date.getUTCDate()}日 ${weekday}`,
+      description: `${tracks.length} 首 · 根据你的音乐口味生成`,
+      sections: [{ tracks, empty: "网易云本次没有返回每日推荐歌曲" }],
+    };
   }
   if (page !== "charts") throw fail("unsupported", "没有这个页面");
   const data = await request("/api/toplist/detail");

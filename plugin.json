@@ -1,7 +1,7 @@
 {
   "id": "netease-all",
   "name": "网易云音乐 All",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "minAppVersion": "0.1.22",
   "main": "plugin/index.js",
   "playback": "stream",
@@ -17,6 +17,11 @@
       "builtin": "home"
     },
     {
+      "title": "每日推荐",
+      "page": "daily",
+      "icon": "calendar"
+    },
+    {
       "title": "私人漫游",
       "builtin": "stations"
     },
@@ -26,16 +31,8 @@
       "icon": "chart"
     },
     {
-      "title": "我喜欢的音乐",
-      "builtin": "liked"
-    },
-    {
       "title": "我的播客",
       "builtin": "shows"
-    },
-    {
-      "title": "账号与同步",
-      "page": "sync"
     }
   ],
   "settings": [

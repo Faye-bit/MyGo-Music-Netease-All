@@ -17,11 +17,16 @@ test('home leads with real ordered daily tracks, reuses data, and never consumes
   const home=await s.plugin.home();
   assert.deepEqual(Array.from(home.sections[0].tracks,t=>t.id),['3','1','2']);
   assert.equal(home.sections[0].tracks[0].album.imageUrl,'https://p1.music.126.net/cover-3.jpg');
+  assert.equal(home.sections[0].pageTitle,'每日歌曲推荐');
+  assert.equal(home.sections[0].subtitle,'根据你的音乐口味生成');
   assert.equal(home.sections[0].morePage,undefined); // native detail uses this exact section
   assert.equal(home.sections[1].links[0].imageUrl,'https://p1.music.126.net/radar.jpg');
   assert.equal(home.sections[3].playlists[0].id,'7');
   const detail=await s.plugin.browse({page:'daily'});
   assert.deepEqual(detail.sections[0].tracks,home.sections[0].tracks);
+  assert.equal(detail.title,'每日歌曲推荐');
+  assert.match(detail.subtitle,/每日推荐 · \d+月\d+日 星期/);
+  assert.equal(detail.description,'3 首 · 根据你的音乐口味生成');
   await s.plugin.home();await s.plugin.stations();await s.plugin.browse({page:'recommendations'});
   assert.equal(count(s,'/api/v3/discovery/recommend/songs'),1);
   assert.equal(count(s,'/api/v1/discovery/recommend/resource'),1);
