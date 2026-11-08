@@ -203,3 +203,21 @@ test('large incomplete daily batch still respects two concurrent feed requests',
   assert.equal(h.sections[0].tracks.length,401);assert.equal(max,2);
   assert.equal(count(s,'/api/v3/song/detail'),2);
 });
+
+test('account-page refresh entry reloads recommendations without cloud writes',async()=>{
+  const s=await setup(call=>{
+    if(call.path==='/api/user/playlist')return response({code:200,playlist:[],more:false});
+    if(call.path==='/api/song/like/get')return response({code:200,ids:[]});
+    return feeds(call);
+  });
+  await s.plugin.home();
+  const page=await s.plugin.browse({page:'sync'});
+  const links=page.sections.flatMap(section=>Array.from(section.links||[]));
+  const refresh=links.find(link=>link.page.startsWith('home-refresh:'));
+  assert(refresh);
+  await s.plugin.browse({page:refresh.page});
+  assert.equal(count(s,'/api/v3/discovery/recommend/songs'),2);
+  assert.equal(count(s,'/api/v1/discovery/recommend/resource'),2);
+  assert(links.some(link=>link.page.startsWith('cancel-sign-in:')));
+  assert.equal(s.calls.some(call=>/manipulate|\/radio\/like/.test(call.path)),false);
+});

@@ -4,11 +4,11 @@
 
 为 MyGo Music 带来独立网易云登录、个性化首页与音乐播放。
 
-![Version](https://img.shields.io/badge/version-0.3.0-E5484D?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.3.1-E5484D?style=flat-square)
 ![MyGo Music](https://img.shields.io/badge/MyGo_Music-0.1.22%2B-555?style=flat-square)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
-[下载安装包](netease-all-0.3.0.zip) · [使用说明](plugin/README.md) · [开发计划](docs/开发Plan.md)
+[下载安装包](netease-all-0.3.1.zip) · [使用说明](plugin/README.md) · [开发计划](docs/开发Plan.md)
 
 </div>
 
@@ -37,7 +37,7 @@ Faye-bit/MyGo-Music-Netease-All
 
 **从本机安装**
 
-下载 [0.3.0 安装包](netease-all-0.3.0.zip)，在「设置 → 插件 → + → 从 Zip 文件」选择该文件。可用 [SHA-256](netease-all-0.3.0.zip.sha256) 核验。
+下载 [0.3.1 安装包](netease-all-0.3.1.zip)，在「设置 → 插件 → + → 从 Zip 文件」选择该文件。可用 [SHA-256](netease-all-0.3.1.zip.sha256) 核验。
 
 安装后选择「网易云音乐 All」，从底部账号入口扫码登录。建议保留并停用旧插件作为回退；新插件使用独立 ID `netease-all`，需要重新登录，不自动迁移旧会话与播放队列。
 
@@ -50,15 +50,15 @@ Faye-bit/MyGo-Music-Netease-All
 ## 使用提示
 
 - **同步歌单**：底部账号 → 我的主页，进入「账号与同步」；喜欢歌单保留在「我的歌单」中。
-- **刷新推荐**：在插件设置的「刷新首页推荐」输入新文字保存，再刷新首页。
+- **刷新推荐**：在「账号与同步 → 刷新首页推荐」重新读取推荐，再刷新首页。
 - **查看音质**：「账号与同步 → 播放诊断」展示最近成功取流的脱敏摘要；缓存或预加载播放时，摘要可能与当前歌曲不同。
-- **取消扫码**：宿主关闭扫码框不会通知插件；可在插件设置的「停止扫码登录」输入新文字保存。
+- **取消扫码**：宿主关闭扫码框不会通知插件；可进入「账号与同步 → 取消扫码登录」立即停止轮询。
 
 ## 开发与文档
 
 ```sh
 npm run check    # 语法检查
-npm test         # 69 项模拟测试
+npm test         # 70 项模拟测试
 npm run package  # 生成安装包与校验文件
 ```
 

@@ -1082,8 +1082,9 @@ async function syncPage() {
     title: "账号与同步", subtitle: profile.name,
     description: `列表读取完成：自建 ${summary.mine} 个，收藏 ${summary.saved} 个，喜欢 ${summary.liked} 首。\n仅表示歌单目录及喜欢 ID 已读取；打开歌单时再加载曲目，超出上限或服务端缺少 ID 时会注明。\n本次已重新读取云端；再次同步请点「刷新云端列表」或播放器刷新按钮。侧栏目录使用播放器刷新按钮更新。`,
     sections: [
-      { links: [
+      { title: "常用操作", links: [
         { title: "刷新云端列表", page: `sync-refresh:${epoch}:${Date.now()}`, subtitle: "重新读取自建、收藏和喜欢列表" },
+        { title: "刷新首页推荐", page: `home-refresh:${epoch}:${Date.now()}`, subtitle: "重新获取日推与推荐歌单，不修改云端内容" },
         { title: "播放诊断", page: "diagnostics", subtitle: "仅包含最近取流的脱敏摘要" },
         { title: "取消扫码登录", page: `cancel-sign-in:${epoch}:${Date.now()}`, subtitle: "停止尚未完成的登录，不退出当前账号" },
       ] },
@@ -1223,7 +1224,8 @@ export { public_addToPlaylist as addToPlaylist };
 const public_removeFromPlaylist = mutation(removeFromPlaylist);
 export { public_removeFromPlaylist as removeFromPlaylist };
 
-// Settings writes reach the plugin directly, even when the host caches browse pages.
+// Compatibility for settings callbacks from older installed manifests. Current
+// manifests expose no text settings; account-page links are the visible entry.
 export function setSetting({key, value}) {
   if (key === "refreshHome" && String(value || "").trim()) refreshHome();
   if (key === "cancelLogin" && String(value || "").trim()) cancelSignIn();

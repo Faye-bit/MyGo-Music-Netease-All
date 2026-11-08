@@ -1,7 +1,7 @@
 {
   "id": "netease-all",
   "name": "网易云音乐 All",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minAppVersion": "0.1.22",
   "main": "plugin/index.js",
   "playback": "stream",
@@ -33,18 +33,6 @@
     {
       "title": "我的播客",
       "builtin": "shows"
-    }
-  ],
-  "settings": [
-    {
-      "key": "cancelLogin",
-      "label": "停止扫码登录",
-      "help": "关闭扫码框后，也可在此输入任意新文字并保存，以立即停止尚未完成的登录。不会退出已登录账号；再次使用时请修改文字。"
-    },
-    {
-      "key": "refreshHome",
-      "label": "刷新首页推荐",
-      "help": "输入任意新文字并保存，清除本账号推荐缓存；随后在发现音乐点击播放器刷新按钮。不会修改云端歌单。再次刷新时请修改文字。"
     }
   ]
 }
