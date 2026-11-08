@@ -1073,9 +1073,7 @@ async function syncPage() {
 }
 
 async function home() {
-  const result = await personalizedHome();
-  result.sections.push({ title: "账号", links: [{ title: "账号与同步", page: "sync", subtitle: "刷新歌单、查看播放诊断或取消扫码登录" }] });
-  return result;
+  return personalizedHome();
 }
 
 async function browse({ page }) {

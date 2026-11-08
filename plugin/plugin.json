@@ -1,7 +1,7 @@
 {
   "id": "netease-all",
   "name": "网易云音乐 All",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minAppVersion": "0.1.22",
   "main": "index.js",
   "playback": "stream",
