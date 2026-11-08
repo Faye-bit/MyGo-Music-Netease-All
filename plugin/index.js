@@ -24,7 +24,12 @@ let epoch = 0;
 let profileCheckedAt = 0;
 let likedCache = null;
 const pendingStreams = new Map();
-let discoveryCovers = null;
+// Memory-only recommendation state. Replaced on every account/refresh boundary.
+let homeCache = new Map();
+let homeRevision = 0;
+let homeWorkers = 0;
+const homeJobs = [];
+let stationQueues = new Map();
 let loginAttempt = null;
 let mutationTail = Promise.resolve();
 let likedRevision = 0;
@@ -45,7 +50,9 @@ function invalidateCaches() {
   likedCache = null;
   likedRevision++;
   pendingStreams.clear();
-  discoveryCovers = null;
+  homeCache = new Map();
+  homeRevision++;
+  stationQueues = new Map();
   host.storage.remove("syncSummary");
   host.storage.remove("streamSummary");
 }
@@ -477,74 +484,167 @@ async function search({ query, kind = "tracks", offset = 0 }) {
   return { [kind]: records.map(type[3]), more: items.length > 0 && offset + items.length < (result[type[2]] || 0) };
 }
 
-async function discoveryPlaylists() {
-  const data = await request("/api/personalized/playlist", { limit: 24 });
-  const playlists = (data.result || []).map(toPlaylist);
-  // Decorative artwork for navigation, not a preview of private recommendations.
-  discoveryCovers = playlists.map(item => item.imageUrl).filter(Boolean);
-  return playlists;
+// NetEase serves China-local daily recommendations. A date change requests the
+// server again; it does not imply the server has produced a different batch.
+function recommendationDay() {
+  return new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 }
 
-function discoveryCover(index) {
-  return discoveryCovers?.length ? discoveryCovers[index % discoveryCovers.length] : "";
-}
-
-async function discoverySection() {
-  try {
-    return { title: "推荐歌单", playlists: await discoveryPlaylists() };
-  } catch (error) {
-    // Authentication failures still reach the host's sign-in flow. Optional
-    // recommendations and cover art must not hide the navigation or radio.
-    if (error.code === "signIn") throw error;
-    return {
-      title: "推荐歌单", empty: "推荐歌单暂时无法加载，点击「查看全部」重试；其他入口仍可使用。",
-      morePage: "discovery",
-    };
+function runHomeJobs() {
+  while (homeWorkers < 2 && homeJobs.length) {
+    const job = homeJobs.shift();
+    homeWorkers++;
+    Promise.resolve().then(job.load).then(job.resolve, job.reject).finally(() => {
+      homeWorkers--;
+      runHomeJobs();
+    });
   }
 }
 
-async function originalHome() {
-  const recommendations = await discoverySection();
+function homeJob(load) {
+  return new Promise((resolve, reject) => {
+    homeJobs.push({ load, resolve, reject });
+    runHomeJobs();
+  });
+}
+
+function refreshHome() {
+  homeCache = new Map();
+  homeRevision++;
+}
+
+function cachedHome(kind, context, load) {
+  const cache = homeCache;
+  const revision = homeRevision;
+  const key = `${epoch}:${currentSession().profile?.id || "guest"}:${recommendationDay()}:${kind}`;
+  const existing = cache.get(key);
+  if (existing && Date.now() < existing.expires) return existing.promise;
+  // Only the current account/date is retained; no unbounded daily history.
+  for (const oldKey of cache.keys()) {
+    if (!oldKey.startsWith(key.slice(0, key.lastIndexOf(":") + 1))) cache.delete(oldKey);
+  }
+  const entry = { expires: Infinity };
+  entry.promise = homeJob(async () => {
+    context.check();
+    if (revision !== homeRevision) throw fail("cancelled", "推荐已刷新，请重试");
+    const value = await load();
+    context.check();
+    if (revision !== homeRevision) throw fail("cancelled", "推荐已刷新，请重试");
+    entry.expires = kind === "daily" ? Infinity : Date.now() + 5 * 60000;
+    return value;
+  }).catch(error => {
+    if (cache.get(key) === entry) cache.delete(key);
+    throw error;
+  });
+  cache.set(key, entry);
+  return entry.promise;
+}
+
+async function recommendationTracks(songs, context) {
+  if (!Array.isArray(songs)) throw new Error("网易云未返回推荐歌曲列表");
+  const ordered = [...new Map(songs.map(song => [idOf(song.id), song])).values()];
+  const missing = ordered.filter(song => !song.name || !(song.ar || song.artists)?.length ||
+    !(song.al || song.album)?.picUrl || !(song.dt || song.duration) || !song.privilege);
+  const details = [];
+  // One detail request at a time within a feed job preserves the two-request
+  // home budget even if the server returns more than 400 daily songs.
+  for (let offset = 0; offset < missing.length; offset += 400) {
+    const batch = missing.slice(offset, offset + 400);
+    details.push(...await songDetails(batch.map(song => song.id), batch, context.options));
+  }
+  context.check();
+  const byID = new Map(details.map(song => [String(song.id), song]));
+  return ordered.map(song => toTrack(byID.get(String(song.id)) || song));
+}
+
+function dailyTracks(context) {
+  return cachedHome("daily", context, async () => {
+    const data = await request("/api/v3/discovery/recommend/songs", {}, context.options);
+    return recommendationTracks(data.data?.dailySongs, context);
+  });
+}
+
+function recommendedPlaylists(context, personalized) {
+  return cachedHome(personalized ? "personalized" : "ordinary", context, async () => {
+    const data = await request(personalized ? "/api/v1/discovery/recommend/resource" : "/api/personalized/playlist",
+      personalized ? {} : { limit: 24 }, context.options);
+    const items = personalized ? data.recommend : data.result;
+    if (!Array.isArray(items)) throw new Error("网易云未返回推荐歌单列表");
+    return items.map(toPlaylist);
+  });
+}
+
+function radarCover(context) {
+  return cachedHome("radar", context, async () => {
+    const data = await request("/api/v6/playlist/detail", { id: PRIVATE_RADAR, n: 1 }, context.options);
+    if (String(data.playlist?.id) !== PRIVATE_RADAR) throw fail("unavailable", "私人雷达暂不可用");
+    return secureURL(data.playlist.coverImgUrl);
+  });
+}
+
+async function optionalHome(load, fallback) {
+  try { return await load(); }
+  catch (error) {
+    if (["signIn", "cancelled"].includes(error.code)) throw error;
+    return fallback;
+  }
+}
+
+async function personalizedHome() {
+  const context = scope();
+  const profile = await account();
+  context.check();
+  const revision = homeRevision;
+  const [daily, recommendations, cover] = await Promise.all([
+    profile ? optionalHome(() => dailyTracks(context), null) : Promise.resolve([]),
+    optionalHome(() => recommendedPlaylists(context, !!profile), null),
+    profile ? optionalHome(() => radarCover(context), "") : Promise.resolve(""),
+  ]);
+  context.check();
+  if (revision !== homeRevision) throw fail("cancelled", "推荐已刷新，请重试");
+  const dailySection = {
+    title: "每日推荐", pageTitle: "每日推荐", subtitle: "为你精选的音乐", tracks: daily || [],
+    empty: !profile ? "登录后查看每日推荐，请从账号入口扫码登录。" :
+      daily === null ? "每日推荐暂时无法加载，可手动刷新重试；其他入口仍可使用。" : "网易云本次没有返回每日推荐歌曲。",
+  };
+  if (daily?.length) delete dailySection.empty;
   return {
-    title: "发现音乐", subtitle: "网易云音乐 · 发现喜欢的音乐",
+    title: "发现音乐", subtitle: profile ? "网易云音乐 · 为你推荐" : "网易云音乐 · 登录后获取个性化推荐",
     sections: [
-      { title: "为你推荐", links: [
-        { title: "每日推荐", subtitle: "每天更新，为你推荐好音乐", page: "daily", imageUrl: discoveryCover(0) },
-        { title: "私人雷达", subtitle: "发现属于你的音乐", page: "radar", imageUrl: discoveryCover(1) },
-        { title: "个性化歌单", subtitle: "网易云为你推荐的歌单", page: "recommendations", imageUrl: discoveryCover(2) },
+      dailySection,
+      { title: "探索音乐", links: [
+        { title: "私人雷达", subtitle: "网易云音乐 · 私人雷达", page: "radar", imageUrl: cover },
+        { title: "个性化歌单", subtitle: "登录后获取网易云推荐", page: "recommendations", imageUrl: recommendations?.[0]?.imageUrl || "" },
+        { title: "排行榜", page: "charts", imageUrl: "" },
+        { title: "刷新首页推荐", subtitle: "重新读取日推、推荐歌单及雷达封面", page: `home-refresh:${epoch}:${homeRevision}:${Date.now()}` },
       ] },
       { title: "私人漫游", stations: stationList() },
-      recommendations,
+      { title: profile ? "为你推荐的歌单" : "普通推荐（未登录）", playlists: recommendations || [],
+        empty: recommendations === null ? "推荐歌单暂时无法加载，请手动刷新重试。" : "网易云本次没有返回推荐歌单。",
+        morePage: profile ? "recommendations" : "discovery" },
     ],
   };
 }
 
 async function originalBrowse({ page }) {
   const context = scope();
-  if (page === "discovery") {
-    return { title: "推荐歌单", sections: [{ playlists: await discoveryPlaylists(), empty: "暂时没有推荐歌单" }] };
+  if (page === "discovery" || page === "recommendations") {
+    const profile = page === "recommendations" ? await requireAccount() : await account();
+    context.check();
+    return { title: profile ? "个性化歌单" : "普通推荐（未登录）", sections: [{
+      playlists: await recommendedPlaylists(context, !!profile), empty: "网易云本次没有返回推荐歌单",
+    }] };
   }
   if (page === "radar") {
-    // NetEase's dynamic playlist is selected for the signed-in listener.
-    // Never label its anonymous response as someone's personal radar.
     await requireAccount();
     context.check();
     const radar = await playlist({ id: PRIVATE_RADAR });
-    return { title: "私人雷达", subtitle: radar.name, sections: [{ tracks: radar.tracks }] };
+    return { title: "私人雷达", subtitle: radar.name, imageUrl: radar.imageUrl, sections: [{ tracks: radar.tracks }] };
   }
   if (page === "daily") {
     await requireAccount();
     context.check();
-    const data = await request("/api/v3/discovery/recommend/songs", {}, context.options);
-    context.check();
-    const songs = data.data?.dailySongs || [];
-    return { title: "每日推荐", sections: [{ tracks: (await songDetails(songs.map(song => song.id), songs, context.options)).map(toTrack) }] };
-  }
-  if (page === "recommendations") {
-    await requireAccount();
-    context.check();
-    const data = await request("/api/v1/discovery/recommend/resource", {}, context.options);
-    return { title: "个性化歌单", sections: [{ playlists: (data.recommend || []).map(toPlaylist) }] };
+    return { title: "每日推荐", sections: [{ tracks: await dailyTracks(context), empty: "网易云本次没有返回每日推荐歌曲" }] };
   }
   if (page !== "charts") throw fail("unsupported", "没有这个页面");
   const data = await request("/api/toplist/detail");
@@ -884,11 +984,10 @@ function stationList() {
     { id: "DEFAULT", name: "私人漫游", description: "随心听，持续推荐你可能喜欢的歌曲" },
     { id: "FAMILIAR", name: "熟悉的歌", description: "回到熟悉的旋律" },
     { id: "EXPLORE", name: "新发现", description: "探索还没听过的音乐" },
-  ].map((station, index) => ({ ...station, imageUrl: discoveryCover(index + 3) }));
+  ].map(station => ({ ...station, imageUrl: "" }));
 }
 
 async function stations() {
-  if (discoveryCovers === null) await discoverySection();
   return stationList();
 }
 
@@ -897,10 +996,36 @@ async function stationNext({ id }) {
   if (!["DEFAULT", "FAMILIAR", "EXPLORE"].includes(id)) throw fail("unsupported", "没有这个漫游模式");
   await requireAccount();
   context.check();
-  const data = await eapi("/api/v1/radio/get", { mode: id, limit: 3 }, context.options);
-  context.check();
-  const songs = data.data || [];
-  return (await songDetails(songs.map(song => song.id), songs, context.options)).map(toTrack);
+  let state = stationQueues.get(id);
+  if (!state) {
+    state = { seen: new Set(), tail: Promise.resolve(), exhausted: false };
+    stationQueues.set(id, state);
+  }
+  // Serialize consumers so overlapping host requests never append the same batch.
+  const result = state.tail.then(async () => {
+    context.check();
+    if (state.exhausted) return [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const data = await eapi("/api/v1/radio/get", { mode: id, limit: 3 }, context.options);
+      context.check();
+      if (!Array.isArray(data.data)) throw new Error("网易云未返回漫游歌曲列表");
+      const fresh = [...new Map(data.data.map(song => [idOf(song.id), song])).values()]
+        .filter(song => !state.seen.has(String(song.id)));
+      if (fresh.length) {
+        const tracks = await recommendationTracks(fresh, context);
+        context.check();
+        for (const track of tracks) state.seen.add(track.id);
+        // Bound memory while retaining the most recent 500 tracks per mode.
+        while (state.seen.size > 500) state.seen.delete(state.seen.values().next().value);
+        return tracks;
+      }
+      if (!data.data.length) break;
+    }
+    state.exhausted = true;
+    return [];
+  });
+  state.tail = result.catch(() => {});
+  return result;
 }
 
 
@@ -941,12 +1066,18 @@ async function syncPage() {
 }
 
 async function home() {
-  const result = await originalHome();
+  const result = await personalizedHome();
   result.sections.push({ title: "账号", links: [{ title: "账号与同步", page: "sync", subtitle: "刷新歌单、查看播放诊断或取消扫码登录" }] });
   return result;
 }
 
 async function browse({ page }) {
+  if (page === "home-refresh" || page.startsWith("home-refresh:")) {
+    refreshHome();
+    const result = await home();
+    result.description = "已重新读取首页推荐。此页列出本批歌曲；返回发现音乐后使用播放器刷新按钮，可更新首页大卡片。服务端可能仍返回同一批推荐。";
+    return result;
+  }
   if (page === "cancel-sign-in" || page.startsWith("cancel-sign-in:")) {
     cancelSignIn();
     return { title: "扫码登录已停止", description: "旧二维码返回的结果不会保存。当前已登录账号保持有效；需要登录时请重新点击账号入口。", sections: [] };
@@ -1068,5 +1199,6 @@ export { public_removeFromPlaylist as removeFromPlaylist };
 
 // Settings writes reach the plugin directly, even when the host caches browse pages.
 export function setSetting({key, value}) {
+  if (key === "refreshHome" && String(value || "").trim()) refreshHome();
   if (key === "cancelLogin" && String(value || "").trim()) cancelSignIn();
 }
